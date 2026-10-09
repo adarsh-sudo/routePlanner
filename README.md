@@ -11,8 +11,8 @@ on fuel**. Built on **Django 6.1** (latest stable).
 * Station prices come from `fuel-prices-for-be-assessment.csv` (bundled at `routeplanner/data/`).
   Station positions come from OpenStreetMap and Overture Maps, matched once, offline (see
   [Data preparation](#data-preparation)).
-* Warm requests take ~30 ms. A cold cross-country request is ~1.5-2.5 s, nearly all of it the two OSRM
-  round trips; everything this app does itself is ~0.1 s (see [Performance](#performance)).
+* Warm requests take ~30 ms. A cold cross-country request is ~1.5-2.5 s, nearly all of it the two routing
+  round trips (OSRM or OpenRouteService); everything this app does itself is ~0.1 s (see [Performance](#performance)).
 
 ## Quick start
 
@@ -25,6 +25,10 @@ python manage.py migrate
 python manage.py load_stations                          # offline, ~1 s
 python manage.py runserver
 ```
+
+That runs out of the box on the free OSRM server, which plans **car** routes, and the page says so. For **truck**
+routes, copy `.env.example` to `.env`, add a free OpenRouteService key and restart (see
+[Truck routes](#truck-routes)).
 
 ```bash
 curl "http://127.0.0.1:8000/api/route/?start=Los Angeles, CA&finish=New York, NY"
@@ -77,9 +81,10 @@ happens, with a normal answer, if the detour call fails. `api_calls` in every re
 
 `GET /api/route/map/?start=...&finish=...` renders the same result as an interactive Leaflet map
 (route line, lettered start/finish pins, numbered fuel-stop pins with popups, and a cost summary).
-The page is a single self-contained template built to `frontend.md` (decisions recorded in `CLAUDE.md`),
+The page is a single self-contained template built to a private design brief (`frontend.md`, kept out of this repo; the
+decisions are recorded in `CLAUDE.md`),
 in a powder palette with an automatic dark mode: a docked planner beside the map with Start/Finish boxes
-and a swap button, a plain-sentence answer ("Seattle, WA to Miami, FL needs $1,043.69 of fuel"), a
+and a swap button, a plain-sentence answer ("Seattle, WA to Miami, FL needs $1,041.62 of fuel"), a
 tank-level chart showing fuel falling between stops and jumping where it is bought, and a stop list whose
 pins are tinted by price tier (cheap = mint, middle = butter, highest = blush). Hovering or clicking a
 stop, a chart dot or a pin highlights the others. Opened with no parameters it shows a sample-trip
@@ -143,7 +148,9 @@ plans its own car route between the stops, and nothing here adds a fuel reserve 
     "duration_hours": 50.39,
     "geometry": { "type": "LineString", "coordinates": [[-118.41035, 34.01965], /* ...4,488 points... */ [-73.93872, 40.6631]] }
   },
-  "routing": { "engine": "osrm", "vehicle": "car", "credit": "OSRM", "truck": null },  // truck mode: see "Truck routes"
+  "routing": { "engine": "osrm", "vehicle": "car", "credit": "OSRM", "truck": null,
+               "note": "This is a car route, not a truck route. Add an OpenRouteService key (ORS_API_KEY) to plan for a truck." },
+               // with a key: engine "openrouteservice", vehicle "truck", the truck's size, note null (see "Truck routes")
   "start_fill": {                       // the fuel used from the starting tank, see "Cost model"
     "reference_station": { "name": "Shelee's Travel Center", "city": "Coachella", "state": "CA", "location": "site", "miles_from_origin": 129.8, /* ... */ },
     "price_per_gallon": 3.949, "gallons": 28.4, "cost": 112.15
@@ -388,8 +395,8 @@ The optimizer already tracks fuel level, so items 1-3 are small changes; item 4 
    stops are still only placed at their exit or city centre.
 3. **Refuel time**: replace the flat `FUEL_STOP_PENALTY_USD` with minutes per stop x value of time, and
    report stop time and total trip time (driving + stops).
-4. **Traffic-aware routing**: today the route is the single fastest path by OSRM's static speed model
-   (`routes[0]`, no live or typical traffic), so `duration_hours` is a free-flow estimate and a jam never
+4. **Traffic-aware routing**: today the route is the single fastest path by the routing engine's static speed model
+   (OSRM's, or OpenRouteService's truck profile; `routes[0]`, no live or typical traffic), so `duration_hours` is a free-flow estimate and a jam never
    changes the route. It needs no new inputs, only a different routing source:
    * Ask for several candidate routes (OSRM `alternatives=true`, or a traffic provider such as Google
      Routes, Mapbox Directions `driving-traffic`, TomTom or HERE, which need an API key).
@@ -434,7 +441,7 @@ optimal plan, and fuel left at the finish is free. Regenerate the table with
 `python manage.py compare_rules` (it calls the live routing service). All three columns use the
 straight-line detour estimates so the comparison is like for like; the product itself, which also
 measures detours by road, costs $1,044.38 (7 stops), $893.11 (6), $529.02 (4) and $296.26 (2) on the same
-routes. This table replaces an earlier one, from a script no longer in the repo, that used city-level
+routes (OSRM car routes; a truck route differs a little, for example Seattle -> Miami is $1,041.62 with 7 stops). This table replaces an earlier one, from a script no longer in the repo, that used city-level
 positions and free detours; its ranking was the same (2-9% more, up to 2.5x the stops).
 
 ## Performance
@@ -453,8 +460,13 @@ Measured for Los Angeles -> New York (2,811 mi) on the dev machine:
 | **Everything this app does** | **~110 ms** |
 | Repeat of the same route (cached) | ~30 ms |
 
-A cold request therefore takes about 1.5-2.5 s, almost all of it the two OSRM round trips (the public
-server's speed varies from run to run, by up to ±0.7 s). What was done about it, measured on fresh server
+These were measured with OSRM (car routes). With OpenRouteService (truck routes, the real service, 9 October 2026) a
+cold search took 2.3 s for Seattle -> Dallas (2,086 mi), 1.0 s for Seattle -> Miami, OH and 0.7 s for Denver -> Chicago:
+the same range, since the routing service is again nearly all of it. The courtesy pause described below applies to
+OSRM only.
+
+A cold request therefore takes about 1.5-2.5 s, almost all of it the two routing round trips (the public
+OSRM server's speed varies from run to run, by up to ±0.7 s). What was done about it, measured on fresh server
 processes (first search after a restart, Los Angeles -> New York, same $893.11 plan): **~2.6 s -> ~1.5 s**.
 
 * **Fewer stations in the detour call**: 10 instead of 30 saves ~0.35 s. On 12 routes it picked the same stops
