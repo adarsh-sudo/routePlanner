@@ -1,0 +1,5 @@
+Django==6.1.2
+numpy>=2.0
+requests>=2.32
+# Not needed to run the app. Only the one-off `fetch_overture_places` data pull uses it:
+#   pip install duckdb

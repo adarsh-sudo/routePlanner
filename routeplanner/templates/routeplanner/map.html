@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="light dark">
+<title>FuelRoute: cheapest fuel stops for a US road trip</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d6e7f6'/%3E%3Cpath d='M9 22h9a4 4 0 0 0 0-8h-4a4 4 0 0 1 0-8h9' fill='none' stroke='%231d2740' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta name="description" content="Enter a start and a finish anywhere in the USA and get the cheapest places to fill up, how much to buy at each, and the total fuel cost for a 500-mile range at 10 mpg.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://server.arcgisonline.com">
+<!-- The font stylesheet must not hold up the first paint: the fallback face below is sized to match, so the swap is quiet. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;700;800&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;700;800&display=swap"></noscript>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+<style>
+  /* Font choice: Overpass is the open-source face built on the lettering of US highway signs, which is
+     the world this product lives in. Fallback is Arial scaled to Overpass's measured width so nothing jumps. */
+  @font-face { font-family: "Overpass Fallback"; src: local("Arial"); size-adjust: 98%; }
+
+  :root {
+    /* Color: powder pastels categorise price tiers; a dark tinted ink supplies the structure */
+    --color-brand:          #2e5e94;  /* primary action, route line, links, focus */
+    --color-brand-hover:    #264f7f;  /* more saturated, darker */
+    --color-brand-active:   #1e4068;
+    --color-brand-subtle:   #d6e7f6;  /* powder blue: selected and hovered rows, start */
+    --color-bg:             #f3f6fa;
+    --color-surface:        #ffffff;
+    --color-border:         #d7dfea;
+    --color-border-strong:  #7c8aa3;  /* input boundaries, 3:1 against bg and surface */
+    --color-text:           #1d2740;
+    --color-text-secondary: #4a5670;
+    --color-text-on-brand:  #ffffff;
+
+    --tier-cheap-bg: #cdebdc;   --tier-cheap-ink: #1b6b50;   /* mint: lowest prices on this trip */
+    --tier-mid-bg:   #f6e8b9;   --tier-mid-ink:   #765506;   /* butter: middle */
+    --tier-high-bg:  #f6d4dc;   --tier-high-ink:  #9e3659;   /* blush: highest */
+    --tier-end-bg:   #ddd8f5;   --tier-end-ink:   #5446a8;   /* lavender: arrival */
+    --tier-start-bg: var(--color-brand-subtle); --tier-start-ink: var(--color-brand);
+
+    --color-danger:        #b3261e;
+    --color-danger-subtle: #fce4e1;
+    --color-info-subtle:   #d6e7f6;
+    --map-tint: sepia(.3) hue-rotate(172deg) saturate(1.5) brightness(1.03);
+    --casing: #ffffff;
+    --shadow-hue: 222 40% 25%;
+
+    /* Type */
+    --font-body: "Overpass", "Overpass Fallback", "Segoe UI", Arial, sans-serif;
+    --text-xs: .75rem;  --text-sm: .875rem;  --text-base: 1rem;  --text-lg: 1.25rem;  --text-xl: 1.563rem;
+    --leading-tight: 1.1;  --leading-snug: 1.3;  --leading-body: 1.5;
+    --weight-regular: 400;  --weight-bold: 700;  --weight-heavy: 800;
+    --measure: 65ch;
+
+    /* Space (4/8 base) */
+    --space-1: 4px;  --space-2: 8px;  --space-3: 12px;  --space-4: 16px;  --space-6: 24px;  --space-8: 32px;  --space-12: 48px;
+    --target: 44px;  /* minimum touch target */
+
+    /* Radius varies with hierarchy */
+    --radius-md: 8px;  --radius-lg: 16px;  --radius-full: 9999px;
+
+    /* Elevation: raised (pins, controls) and overlay (popups) */
+    --shadow-raised:  0 1px 2px hsl(var(--shadow-hue) / .14), 0 2px 8px hsl(var(--shadow-hue) / .12);
+    --shadow-overlay: 0 8px 32px hsl(var(--shadow-hue) / .22);
+
+    /* Motion */
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+    --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+    --duration-fast: 120ms;  --duration-base: 220ms;  --duration-slow: 360ms;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-brand:          #8fbdeb;
+      --color-brand-hover:    #a9cdf1;
+      --color-brand-active:   #c3dcf6;
+      --color-brand-subtle:   #22344f;
+      --color-bg:             #101626;
+      --color-surface:        #182036;
+      --color-border:         #2b3652;
+      --color-border-strong:  #6f7fa0;
+      --color-text:           #e8edf8;
+      --color-text-secondary: #a9b5ce;
+      --color-text-on-brand:  #0f1a2b;
+      --tier-cheap-bg: #1f4b3c;   --tier-cheap-ink: #8fddbc;
+      --tier-mid-bg:   #4a3f17;   --tier-mid-ink:   #ebd48c;
+      --tier-high-bg:  #50293a;   --tier-high-ink:  #f2a7bd;
+      --tier-end-bg:   #342f63;   --tier-end-ink:   #bfb8f5;
+      --color-danger:        #ff8a80;
+      --color-danger-subtle: #3a1d1f;
+      --color-info-subtle:   #22344f;
+      --map-tint: sepia(.3) hue-rotate(185deg) saturate(1.2) brightness(1.05);
+      --casing: #0b0f1b;
+      --shadow-hue: 222 60% 3%;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: var(--weight-regular) var(--text-base)/var(--leading-body) var(--font-body); background: var(--color-bg); color: var(--color-text); -webkit-font-smoothing: antialiased; }
+  button, input { font: inherit; color: inherit; }
+  :where(a, button, input, [tabindex]):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+  .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .sr, .skip:not(:focus) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .skip { position: absolute; z-index: 2000; top: var(--space-2); left: var(--space-2); padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-overlay); }
+
+  /* ---------- Layout: docked planner beside the map; map on top on phones ---------- */
+  .app { display: grid; grid-template-columns: minmax(22.5rem, 27.5rem) 1fr; height: 100%; }
+  .panel { display: flex; flex-direction: column; min-height: 0; background: var(--color-surface); border-right: 1px solid var(--color-border); }
+  .panel-head { padding: var(--space-6) var(--space-6) var(--space-4); }
+  .panel-body { flex: 1; overflow-y: auto; padding: 0 var(--space-6) var(--space-8); scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
+  #map { min-height: 0; background: var(--color-bg); }
+  @media (max-width: 899px) {
+    html, body { height: auto; }
+    .app { display: flex; flex-direction: column-reverse; height: auto; min-height: 100vh; }
+    #map { flex: none; height: 46vh; min-height: 22rem; }
+    /* a popup opens above its pin, so on a short phone map it must fit (the map pans to show it) or scroll */
+    .pop-wrap .leaflet-popup-content { max-height: calc(max(46vh, 22rem) - 8rem); overflow-y: auto; overscroll-behavior: contain; }
+    .panel { border-right: 0; border-top: 1px solid var(--color-border); }
+    .panel-body { overflow: visible; padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom)); }
+  }
+  /* On a very narrow touch screen the popup and the zoom buttons cannot sit side by side: pinch to zoom instead */
+  @media (pointer: coarse) and (max-width: 359px) {
+    .leaflet-control-zoom { display: none; }
+  }
+
+  /* ---------- Brand ---------- */
+  .brand { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-6); }
+  .logo { width: var(--space-8); height: var(--space-8); display: grid; place-items: center; border-radius: var(--radius-md); background: var(--color-brand-subtle); color: var(--color-brand); }
+  .brand h1 { margin: 0; font-size: var(--text-lg); font-weight: var(--weight-heavy); letter-spacing: -.01em; line-height: var(--leading-tight); }
+
+  /* ---------- Form ---------- */
+  .search { display: grid; gap: var(--space-3); }
+  .fields { position: relative; display: grid; gap: var(--space-3); }
+  .field label { display: block; margin: 0 0 var(--space-1); font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--color-text-secondary); letter-spacing: .01em; }
+  .field input { width: 100%; min-height: var(--target); padding: var(--space-3) calc(var(--target) + var(--space-3)) var(--space-3) var(--space-4); border-radius: var(--radius-md);
+    border: 1px solid var(--color-border-strong); background: var(--color-surface); font-size: var(--text-base); font-weight: var(--weight-bold);
+    transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+  .field input::placeholder { color: var(--color-text-secondary); font-weight: var(--weight-regular); opacity: .8; }
+  .field input:focus { border-color: var(--color-brand); box-shadow: 0 0 0 3px var(--color-brand-subtle); }
+  .field input[aria-invalid="true"] { border-color: var(--color-danger); }
+  .swap { position: absolute; right: var(--space-2); top: calc(50% + var(--space-3)); width: var(--target); height: var(--target); display: grid; place-items: center; transform: translateY(-50%);
+    border-radius: var(--radius-full); border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), transform var(--duration-base) var(--ease-out); }
+  .swap:active { transform: translateY(-50%) scale(.94); }
+  .swap .ic { transition: transform var(--duration-base) var(--ease-out); }
+  .swap.is-swapped .ic { transform: rotate(180deg); }
+  .go { display: flex; align-items: center; justify-content: center; gap: var(--space-2); width: 100%; min-height: var(--space-12); padding: var(--space-3) var(--space-6);
+    border: 0; border-radius: var(--radius-md); cursor: pointer; font-weight: var(--weight-heavy); font-size: var(--text-base);
+    background: var(--color-brand); color: var(--color-text-on-brand);
+    transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+  .go:active { transform: scale(.98); background: var(--color-brand-active); }
+  .go:disabled { cursor: progress; background: var(--color-brand-active); }
+  .spin { display: none; width: 1em; height: 1em; border-radius: var(--radius-full); border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; }
+  .is-loading .spin { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (hover: hover) {
+    .swap:hover { color: var(--color-text); background: var(--color-brand-subtle); }
+    .go:hover:not(:disabled) { background: var(--color-brand-hover); }
+  }
+
+  /* ---------- Messages ---------- */
+  .error { display: flex; gap: var(--space-3); margin: 0 0 var(--space-6); padding: var(--space-4); border-radius: var(--radius-md);
+    background: var(--color-danger-subtle); border: 1px solid var(--color-danger); }
+  .error .ic { color: var(--color-danger); margin-top: 2px; }
+  .error p { margin: 0; }
+  .error .hint { margin-top: var(--space-1); font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .note { display: flex; gap: var(--space-3); margin: 0 0 var(--space-6); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--color-info-subtle); font-size: var(--text-sm); }
+  .note .ic { color: var(--color-brand); margin-top: 1px; }
+  .note p { margin: 0; } .note p + p { margin-top: var(--space-1); }
+  .note a { display: inline-block; padding: var(--space-1) 2px; color: var(--color-brand); font-weight: var(--weight-bold); }
+  @media (pointer: coarse) { .note a { padding: var(--space-2) var(--space-1); } }
+  .note[hidden] { display: none; }
+
+  /* ---------- Empty state ---------- */
+  .empty h2 { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-xl); font-weight: var(--weight-heavy); line-height: var(--leading-snug); letter-spacing: -.01em; }
+  .empty p { margin: 0 0 var(--space-4); max-width: var(--measure); color: var(--color-text-secondary); }
+  .empty svg.art { display: block; width: 4.5rem; height: 4.5rem; }
+  .samples-title { margin: var(--space-6) 0 var(--space-1); font-size: var(--text-sm); font-weight: var(--weight-bold); color: var(--color-text-secondary); }
+  .samples { margin: 0; padding: 0; list-style: none; }
+  .samples a { display: flex; align-items: center; min-height: var(--target); padding: 0 var(--space-2); border-bottom: 1px solid var(--color-border); color: var(--color-brand); font-weight: var(--weight-bold); text-decoration: none; }
+  .samples a:hover { text-decoration: underline; }
+
+  /* ---------- Take the plan into a navigation app ---------- */
+  .take { margin: 0; max-width: var(--measure); font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .actions { margin: var(--space-3) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-2); }
+  .actions a { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--target); padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-brand); font-weight: var(--weight-bold); text-decoration: none; }
+  .actions a:active { transform: scale(.99); }
+  @media (hover: hover) { .actions a:hover { background: var(--color-brand-subtle); } }
+
+  /* ---------- Result ---------- */
+  .result-title { margin: 0 0 var(--space-2); font-size: var(--text-xl); font-weight: var(--weight-heavy); line-height: var(--leading-snug); letter-spacing: -.01em; max-width: var(--measure); font-variant-numeric: tabular-nums; }
+  .summary { margin: 0 0 var(--space-6); max-width: var(--measure); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+  .section-title { margin: var(--space-8) 0 var(--space-2); font-size: var(--text-lg); font-weight: var(--weight-heavy); letter-spacing: -.01em; }
+
+  /* The memorable element: fuel in the tank along the route */
+  .gauge { margin: 0; }
+  .gauge figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--space-3); margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-bold); }
+  .gauge figcaption span + span { font-weight: var(--weight-regular); color: var(--color-text-secondary); }
+  .gauge-plot { position: relative; height: 7.5rem; border-bottom: 2px solid var(--color-border-strong); }
+  .gauge-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; transform-origin: left center; animation: grow-x 900ms var(--ease-in-out) both; }
+  @keyframes grow-x { from { transform: scaleX(0); } }
+  .gauge .area { fill: var(--color-brand-subtle); }
+  .gauge .line { fill: none; stroke: var(--color-brand); stroke-width: 2.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .gauge .full { stroke: var(--color-border-strong); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+  .gauge-dot { position: absolute; width: var(--target); height: var(--target); margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; transform: translate(-50%, 50%); display: grid; place-items: center; }
+  .gauge-dot span { width: var(--space-4); height: var(--space-4); border-radius: var(--radius-full); background: var(--bg); border: 2px solid var(--ink); transition: transform var(--duration-fast) var(--ease-out); }
+  .gauge-dot.is-hot span { transform: scale(1.4); }
+  .gauge-axis { display: flex; justify-content: space-between; margin-top: var(--space-1); font-size: var(--text-xs); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+
+  .tier-cheap { --bg: var(--tier-cheap-bg); --ink: var(--tier-cheap-ink); }
+  .tier-mid   { --bg: var(--tier-mid-bg);   --ink: var(--tier-mid-ink); }
+  .tier-high  { --bg: var(--tier-high-bg);  --ink: var(--tier-high-ink); }
+  .tier-start { --bg: var(--tier-start-bg); --ink: var(--tier-start-ink); }
+  .tier-end   { --bg: var(--tier-end-bg);   --ink: var(--tier-end-ink); }
+
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
+  .legend i { width: var(--space-4); height: var(--space-4); border-radius: var(--radius-full); background: var(--bg); border: 2px solid var(--ink); }
+
+  .stops { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--color-border); }
+  .stop-btn { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); width: 100%; min-height: calc(var(--target) + var(--space-8)); padding: var(--space-3) var(--space-2);
+    border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: transparent; text-align: left; cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out); }
+  .stop-btn.is-hot { background: var(--color-brand-subtle); }
+  .pin-sm { width: var(--space-8); height: var(--space-8); display: grid; place-items: center; border-radius: var(--radius-full); font-weight: var(--weight-heavy); font-size: var(--text-sm);
+    background: var(--bg); color: var(--ink); border: 2px solid var(--ink); }
+  .stop-name { display: block; font-weight: var(--weight-bold); line-height: var(--leading-snug); overflow-wrap: anywhere; }
+  .stop-meta { display: block; margin-top: 2px; font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .stop-buy { display: grid; justify-items: end; gap: var(--space-1); text-align: right; font-variant-numeric: tabular-nums; }
+  .price { padding: 2px var(--space-2); border-radius: var(--radius-full); background: var(--bg); color: var(--ink); font-weight: var(--weight-heavy); font-size: var(--text-sm); white-space: nowrap; }
+  .stop-amt { font-size: var(--text-sm); color: var(--color-text-secondary); white-space: nowrap; }
+  .stop-amt b { color: var(--color-text); }
+  .foot { margin: var(--space-6) 0 0; max-width: var(--measure); font-size: var(--text-xs); color: var(--color-text-secondary); }
+
+  /* ---------- Loading skeleton: same shape as the result so nothing jumps ---------- */
+  .sk { border-radius: var(--radius-md); background: var(--color-border); animation: pulse 1.2s var(--ease-in-out) infinite alternate; }
+  @keyframes pulse { from { opacity: .5; } to { opacity: 1; } }
+  .sk-title { height: 3.25rem; margin-bottom: var(--space-3); } .sk-line { height: var(--space-4); width: 70%; margin-bottom: var(--space-6); }
+  .sk-gauge { height: 7.5rem; margin-bottom: var(--space-8); } .sk-row { height: 4.5rem; margin-bottom: var(--space-2); }
+
+  /* ---------- Map ---------- */
+  .leaflet-container { font-family: var(--font-body); background: var(--color-bg); }
+  .leaflet-tile-pane { filter: var(--map-tint); }  /* a soft powder wash over the gray canvas */
+  .route-casing { stroke: var(--casing); }
+  .route-line { stroke: var(--color-brand); }
+  .leaflet-bar { border: 0 !important; border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-raised) !important; }
+  .leaflet-bar a { width: var(--target) !important; height: var(--target) !important; line-height: var(--target) !important; font-size: var(--text-lg); color: var(--color-text); background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+  .leaflet-bar a:last-child { border-bottom: 0; }
+  @media (hover: hover) { .leaflet-bar a:hover { background: var(--color-brand-subtle); color: var(--color-text); } }
+  .leaflet-container .leaflet-control-attribution { margin: 0; padding: 2px var(--space-2); max-width: calc(100vw - var(--space-4)); white-space: normal; text-align: right; line-height: var(--leading-snug);
+    font-size: var(--text-xs); color: var(--color-text-secondary); background: var(--color-surface); opacity: .92; }
+  .leaflet-control-attribution a { color: var(--color-text); }
+  .pin-hit { width: var(--target); height: var(--target); display: grid; place-items: center; }
+  .pin { width: var(--space-8); height: var(--space-8); display: grid; place-items: center; border-radius: var(--radius-full); font-weight: var(--weight-heavy); font-size: var(--text-sm);
+    background: var(--bg); color: var(--ink); border: 2px solid var(--ink); box-shadow: var(--shadow-raised);
+    transition: transform var(--duration-fast) var(--ease-out); animation: drop var(--duration-slow) var(--ease-out) backwards; animation-delay: var(--delay, 0ms); }
+  .pin.is-hot { transform: scale(1.2); }
+  @keyframes drop { from { transform: translateY(calc(-1 * var(--space-4))) scale(.6); opacity: 0; } }
+  .pop-wrap .leaflet-popup-content-wrapper { padding: 0; border-radius: var(--radius-lg); background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-overlay); }
+  .pop-wrap .leaflet-popup-content { margin: 0; width: 16.25rem !important; font-size: var(--text-base); line-height: var(--leading-body); }
+  .pop-wrap .leaflet-popup-tip { background: var(--color-surface); box-shadow: none; }
+  .pop { padding: var(--space-4); }
+  .pop-head { display: flex; align-items: center; gap: var(--space-3); }
+  .pop-head strong { line-height: var(--leading-snug); }
+  .pop p { margin: var(--space-2) 0 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .pop p.buy { color: var(--color-text); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></symbol>
+</svg>
+<a class="skip" href="#content">Skip to results</a>
+
+<div class="app">
+  <main class="panel">
+    <div class="panel-head">
+      <div class="brand"><span class="logo"><svg class="ic" aria-hidden="true"><use href="#i-route"/></svg></span><h1>FuelRoute</h1></div>
+      <form class="search" id="search" method="get" action="{% url 'route-map' %}">
+        <div class="fields">
+          <div class="field">
+            <label for="start">Start</label>
+            <input id="start" name="start" value="{{ start }}" placeholder="Seattle, WA" autocomplete="off" autocapitalize="words" enterkeyhint="next" required{% if error %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+          </div>
+          <div class="field">
+            <label for="finish">Finish</label>
+            <input id="finish" name="finish" value="{{ finish }}" placeholder="Miami, FL" autocomplete="off" autocapitalize="words" enterkeyhint="go" required{% if error %} aria-invalid="true" aria-describedby="form-error"{% endif %}>
+          </div>
+          <button type="button" class="swap" id="swap" aria-label="Swap start and finish"><svg class="ic" aria-hidden="true"><use href="#i-swap"/></svg></button>
+        </div>
+        <button type="submit" class="go" id="go"><span class="spin" aria-hidden="true"></span><span id="go-label">Find fuel stops</span></button>
+      </form>
+    </div>
+
+    <div class="panel-body" id="content" tabindex="-1">
+      {% if error %}
+      <div class="error" role="alert" id="form-error">
+        <svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>
+        <div><p>{{ error }}</p>{% if error_hint %}<p class="hint">{{ error_hint }}</p>{% endif %}</div>
+      </div>
+      {% endif %}
+
+      {% if payload %}
+      <!-- Until the script has built the result, show its outline, so the fixed headings below never jump down. -->
+      <div id="results-sk" aria-hidden="true"><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-gauge"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div></div>
+      <section id="results" aria-labelledby="result-title" hidden>
+        <div class="note" id="matched" hidden><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div id="matched-text"></div></div>
+        <div class="note" id="car-note" hidden><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><div id="car-note-text"></div></div>
+        <h2 class="result-title" id="result-title"></h2>
+        <p class="summary" id="summary"></p>
+        <figure class="gauge" id="gauge"></figure>
+        <h3 class="section-title">Fuel stops</h3>
+        <p class="legend" aria-label="Price tiers on this trip"><span class="tier-cheap"><i></i>Lowest prices</span><span class="tier-mid"><i></i>Middle</span><span class="tier-high"><i></i>Highest</span></p>
+        <ol class="stops" id="stops"></ol>
+        <h3 class="section-title">Take this plan with you</h3>
+        <p class="take" id="take-text"></p>
+        <ul class="actions" id="actions"></ul>
+        <p class="foot">Prices come from the supplied fuel-price file, and each stop is priced for the fuel bought there. Routes by {{ payload.routing.credit }}. Station positions from OpenStreetMap contributors and Overture Maps.</p>
+      </section>
+      {% else %}
+      <div class="empty">
+        {% if not error %}
+        <svg class="art" viewBox="0 0 72 72" aria-hidden="true">
+          <rect width="72" height="72" rx="16" fill="var(--color-brand-subtle)"/>
+          <path d="M16 54c14 0 6-18 20-18s6-18 20-18" fill="none" stroke="var(--color-border-strong)" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 7"/>
+          <circle cx="16" cy="54" r="6" fill="var(--tier-start-bg)" stroke="var(--color-brand)" stroke-width="3"/>
+          <circle cx="56" cy="18" r="6" fill="var(--tier-end-bg)" stroke="var(--tier-end-ink)" stroke-width="3"/>
+          <circle cx="36" cy="36" r="6" fill="var(--tier-cheap-bg)" stroke="var(--tier-cheap-ink)" stroke-width="3"/>
+        </svg>
+        <h2>Find the cheapest places to fill up</h2>
+        <p>Enter a start and a finish anywhere in the USA. You get the stops, how much to buy at each, and the total fuel cost for a 500-mile range at 10 mpg.</p>
+        {% endif %}
+        <p class="samples-title">Try a sample trip</p>
+        <ul class="samples">
+          <li><a href="{% url 'route-map' %}?start=Seattle,%20WA&amp;finish=Miami,%20FL">Seattle to Miami</a></li>
+          <li><a href="{% url 'route-map' %}?start=Los%20Angeles,%20CA&amp;finish=New%20York,%20NY">Los Angeles to New York</a></li>
+          <li><a href="{% url 'route-map' %}?start=Boston,%20MA&amp;finish=Dallas,%20TX">Boston to Dallas</a></li>
+          <li><a href="{% url 'route-map' %}?start=Denver,%20CO&amp;finish=Chicago,%20IL">Denver to Chicago</a></li>
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </main>
+  <div id="map" role="region" aria-label="Route map"></div>
+</div>
+
+{{ payload|json_script:"trip-data" }}
+<script>
+// Leaflet is deferred (see the head), so run once the page has been parsed and it has loaded.
+document.addEventListener("DOMContentLoaded", function () {
+  var d = JSON.parse(document.getElementById("trip-data").textContent);
+  var $ = function (id) { return document.getElementById(id); };
+  var num = function (n, dp) { return n.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp }); };
+  var money = function (n) { return "$" + num(n, 2); };
+  var esc = function (s) { var e = document.createElement("div"); e.textContent = s; return e.innerHTML; };
+  var hm = function (h) { var m = Math.round(h * 60); return Math.floor(m / 60) + " h " + ("0" + (m % 60)).slice(-2) + " min"; };
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- form: swap, and a skeleton of the real result while the route is worked out (about 2 s cold) ----
+  var form = $("search"), go = $("go"), content = $("content");
+  var skeleton = '<div aria-hidden="true"><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-gauge"></div>' +
+    '<div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div><div class="sk sk-row"></div></div>';
+  var showLoading = function () {
+    go.disabled = true; go.classList.add("is-loading"); $("go-label").textContent = "Finding stops";
+    content.setAttribute("aria-busy", "true"); content.innerHTML = skeleton;
+  };
+  form.addEventListener("submit", showLoading);
+  document.querySelectorAll(".samples a").forEach(function (a) { a.addEventListener("click", showLoading); });
+  // As soon as the user shows intent (focuses a box, or points at a sample trip), have the server open its
+  // connection to the routing service, so the search itself does not wait ~0.8 s for the handshake.
+  var warmed = false;
+  var warm = function () {
+    if (warmed) return;
+    warmed = true;
+    try { fetch("{% url 'route-warm' %}", { cache: "no-store", keepalive: true }).catch(function () {}); } catch (e) {}
+  };
+  ["start", "finish"].forEach(function (id) { $(id).addEventListener("focus", warm, { once: true }); });
+  document.querySelectorAll(".samples a").forEach(function (a) { a.addEventListener("pointerenter", warm, { once: true }); });
+  window.addEventListener("pageshow", function (e) { if (e.persisted) location.reload(); });
+  $("swap").addEventListener("click", function () {
+    var a = $("start"), b = $("finish"), t = a.value; a.value = b.value; b.value = t;
+    this.classList.toggle("is-swapped");
+  });
+
+  // ---- map: Esri gray canvas (keyless) with a separate labels layer kept below the route ----
+  if (typeof L === "undefined") {  // the map library did not load (offline, or blocked): say so rather than sit on the outline
+    var outline = $("results-sk");
+    if (outline) outline.outerHTML = '<div class="error" role="alert"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>' +
+      '<div><p>The map could not load.</p><p class="hint">Check your connection and reload the page.</p></div></div>';
+    content.removeAttribute("aria-busy");
+    return;
+  }
+  var map = L.map("map", { zoomControl: false, attributionControl: false, zoomSnap: 0.25 });
+  // On a touch screen the map is short, and zoom buttons stacked under the credit line push it up over the
+  // pins: put the buttons top-right there, so only the credit line sits at the bottom.
+  var touch = matchMedia("(pointer: coarse)").matches;
+  L.control.zoom({ position: touch ? "topright" : "bottomright" }).addTo(map);
+  L.control.attribution({ position: "bottomright", prefix: false }).addTo(map);
+  var dark = matchMedia("(prefers-color-scheme: dark)"), tiles = [];
+  map.createPane("labels").style.zIndex = 250; map.getPane("labels").style.pointerEvents = "none";
+  var setTiles = function () {
+    tiles.forEach(function (t) { map.removeLayer(t); });
+    var url = function (name) { return "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/" + name + "/MapServer/tile/{z}/{y}/{x}"; };
+    var kind = dark.matches ? "Dark" : "Light", opts = { maxNativeZoom: 16, maxZoom: 18 };
+    tiles = [
+      L.tileLayer(url("World_" + kind + "_Gray_Base"), L.extend({
+        attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, FAO, NOAA, USGS | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }, opts)),
+      L.tileLayer(url("World_" + kind + "_Gray_Reference"), L.extend({ pane: "labels" }, opts))
+    ];
+    tiles.forEach(function (t) { t.addTo(map); });
+  };
+  setTiles();
+  if (dark.addEventListener) dark.addEventListener("change", setTiles); else if (dark.addListener) dark.addListener(setTiles);
+  if (!d) { map.setView([39.5, -98.35], 4); return; }  // no route yet: show the USA
+
+  // ---- result ----
+  // Swap the outline for the result in this same task, so the browser never paints the headings without their content.
+  $("results").hidden = false; $("results-sk").remove(); content.removeAttribute("aria-busy");
+  var S = d.summary, stops = d.fuel_stops, total = d.route.distance_miles, sf = d.start_fill, rs = sf.reference_station;
+  var avg = S.total_gallons ? S.total_fuel_cost / S.total_gallons : 0;
+  var prices = stops.map(function (s) { return s.price_per_gallon; });
+  var lo = Math.min.apply(null, prices), hi = Math.max.apply(null, prices);
+  var tier = function (p) { var t = hi === lo ? 0.5 : (p - lo) / (hi - lo); return t < 0.34 ? "tier-cheap" : t < 0.67 ? "tier-mid" : "tier-high"; };
+  var plural = function (n, one, many) { return n + " " + (n === 1 ? one : many); };
+
+  $("result-title").textContent = d.start.label + " to " + d.finish.label + " needs " + money(S.total_fuel_cost) + " of fuel";
+  // A truck route says which truck it was planned for (the data is metric; the page shows feet and pounds).
+  var truck = d.routing && d.routing.truck, inches = truck ? Math.round(truck.height_m / 0.0254) : 0;
+  var truckNote = truck ? " Routed for a truck " + Math.floor(inches / 12) + " ft " + (inches % 12) + " in high, " +
+    num(Math.round(truck.weight_t * 2204.62 / 100) * 100, 0) + " lb." : "";
+  $("summary").textContent = num(S.total_gallons, 1) + " gallons at an average $" + avg.toFixed(3) + " a gallon, over " + num(total, 1) +
+    " miles with " + plural(S.num_fuel_stops, "fuel stop", "fuel stops") + ". About " + hm(d.route.duration_hours) + " of driving." + truckNote;
+
+  // A name typed without a state ("Springfield") is taken to be the most populous place of that name. Say so,
+  // and offer the others as one-tap fixes that re-run the search with that place named in full.
+  var searchUrl = function (which, label) {
+    var s = which === "Start" ? label : d.start.query, f = which === "Finish" ? label : d.finish.query;
+    return location.pathname + "?start=" + encodeURIComponent(s) + "&finish=" + encodeURIComponent(f);
+  };
+  var notes = [["Start", d.start], ["Finish", d.finish]].filter(function (p) { return p[1].resolved_address; })
+    .map(function (p) {
+      var alts = (p[1].alternatives || []).map(function (a) { return '<a href="' + searchUrl(p[0], a) + '">' + esc(a) + "</a>"; });
+      var text = alts.length ? p[1].resolved_address.replace(/ \(also:[^)]*\)/, "") : p[1].resolved_address;  // the links replace the list
+      return "<p><b>" + p[0] + " matched:</b> " + esc(text) + (alts.length ? "<br>Meant a different one? " + alts.join(" &middot; ") : "") + "</p>";
+    });
+  if (notes.length) {
+    $("matched-text").innerHTML = notes.join(""); $("matched").hidden = false;
+    $("matched-text").querySelectorAll("a").forEach(function (a) { a.addEventListener("click", showLoading); });
+  }
+  // A car route on a truck planner (no OpenRouteService key): say so, the route may use roads a truck cannot.
+  if (d.routing && d.routing.note) { $("car-note-text").textContent = d.routing.note; $("car-note").hidden = false; }
+
+  // fuel in the tank (miles of range) along the route: it falls between stops and jumps where fuel is bought
+  var R = S.range_miles, mpg = S.mpg, W = 1000, H = 120, PAD = 12;
+  var yOf = function (lvl) { return H - PAD - Math.max(0, Math.min(R, lvl)) / R * (H - 2 * PAD); };
+  var level = sf.gallons * mpg, lastMile = 0, trace = [[0, level]];
+  stops.forEach(function (s) {
+    level = Math.max(0, level - (s.mile_marker - lastMile)); trace.push([s.mile_marker, level]);
+    // what is bought includes the fuel the detour burns, so the tank rejoins the route that far short
+    level += s.gallons * mpg - s.detour_miles; trace.push([s.mile_marker, level]); s._after = level; lastMile = s.mile_marker;
+  });
+  trace.push([total, Math.max(0, level - (total - lastMile))]);
+  var pts = trace.map(function (p) { return (p[0] / total * W).toFixed(1) + "," + yOf(p[1]).toFixed(1); });
+  var line = "M" + pts.join(" L"), area = line + " L" + W + "," + yOf(0) + " L0," + yOf(0) + " Z";
+  $("gauge").innerHTML = '<figcaption><span>Fuel in the tank along the route</span><span>Dashed line: full tank, ' + R + ' mi</span></figcaption><div class="gauge-plot">' +
+    '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" aria-hidden="true"><line class="full" x1="0" x2="' + W + '" y1="' + yOf(R) + '" y2="' + yOf(R) + '"/>' +
+    '<path class="area" d="' + area + '"/><path class="line" d="' + line + '"/></svg>' +
+    stops.map(function (s, i) {
+      var bottom = (PAD + Math.min(1, s._after / R) * (H - 2 * PAD)) / H * 100;
+      return '<button type="button" class="gauge-dot ' + tier(s.price_per_gallon) + '" data-i="' + (i + 1) + '" style="left:' + (s.mile_marker / total * 100) + '%;bottom:' + bottom +
+        '%" aria-label="Stop ' + s.order + ', ' + esc(s.name) + ', mile ' + num(s.mile_marker, 0) + '"><span></span></button>';
+    }).join("") + '</div><div class="gauge-axis"><span>0 mi</span><span>' + num(total, 0) + ' mi</span></div>';
+
+  var priceTag = function (p) { return '<span class="price">$' + p.toFixed(3) + '/gal</span>'; };
+  var row = function (i, tierCls, label, name, meta, buy) {
+    return '<li><button type="button" class="stop-btn ' + tierCls + '" data-i="' + i + '"><span class="pin-sm">' + label + '</span>' +
+      '<span><span class="stop-name">' + name + '</span><span class="stop-meta">' + meta + '</span></span>' + (buy || "") + '</button></li>';
+  };
+  var rows = [row(0, "tier-start", "A", "Starting tank", "Priced at " + esc(rs.name) + ", " + esc(rs.city) + ", " + rs.state,
+    '<span class="stop-buy">' + priceTag(sf.price_per_gallon) + '<span class="stop-amt">' + num(sf.gallons, 1) + ' gal used, <b>' + money(sf.cost) + '</b></span></span>')];
+  // the round trip off the route the plan paid for: measured by road, or "about" when only estimated
+  var detour = function (s) {
+    return s.detour_miles >= 0.1 ? (s.detour_source === "driven" ? "" : "about ") + num(s.detour_miles, 1) + " mi detour" : "";
+  };
+  stops.forEach(function (s, i) {
+    var off = detour(s) ? ", " + detour(s) : "";
+    rows.push(row(i + 1, tier(s.price_per_gallon), s.order, esc(s.name), esc(s.city) + ", " + s.state + ". Mile " + num(s.mile_marker, 1) + off,
+      '<span class="stop-buy">' + priceTag(s.price_per_gallon) + '<span class="stop-amt">' + num(s.gallons, 1) + ' gal, <b>' + money(s.cost) + '</b></span></span>'));
+  });
+  rows.push(row(stops.length + 1, "tier-end", "B", "Arrive in " + esc(d.finish.label), num(total, 1) + " miles, " + hm(d.route.duration_hours), ""));
+  $("stops").innerHTML = rows.join("");
+
+  // ---- take the plan into a navigation app (this page plans the fuel stops; it does not navigate) ----
+  var nav = d.navigation, legs = matchMedia("(pointer: coarse)").matches ? nav.google_maps_mobile : nav.google_maps;
+  $("take-text").textContent = "This app plans where to fill up; it does not navigate. Open the stops in Google Maps to drive them, " +
+    "or load the GPX file into a GPS. Google Maps plans its own car route, so for a truck use a GPS that routes for trucks." +
+    (stops.some(function (s) { return s.location !== "site"; })
+      ? " A stop with only an approximate position (at its highway exit or city centre, or where our two map sources disagree) may show in Google Maps as a nearby address or a different store: check the name when you get there." : "") +
+    (legs.length > 1 ? " Phones allow three stops per link, so this trip comes in " + legs.length + " parts. Do them in order." : "");
+  var addAction = function (href, text, glyph, file) {
+    var li = document.createElement("li"), a = document.createElement("a"), t = document.createElement("span"), g = document.createElement("span");
+    a.href = href;
+    if (file) a.setAttribute("download", file); else { a.target = "_blank"; a.rel = "noopener"; }
+    t.textContent = text; g.textContent = glyph; g.setAttribute("aria-hidden", "true");
+    a.appendChild(t); a.appendChild(g); li.appendChild(a); $("actions").appendChild(li);
+  };
+  legs.forEach(function (l) { addAction(l.url, l.label, "↗"); });
+  addAction(nav.gpx_url, "Download for a GPS (GPX file)", "↓", "fuelroute.gpx");
+
+  // ---- map layers ----
+  var geo = function (cls, weight) {
+    return L.geoJSON(d.route.geometry, { style: { className: cls, weight: weight, opacity: 1, lineCap: "round", lineJoin: "round" } }).addTo(map);
+  };
+  geo("route-casing", 10); var routeLayer = geo("route-line", 5);
+  map.fitBounds(routeLayer.getBounds(), { padding: [48, 48] });
+
+  // the one orchestrated moment: the route draws itself, and pins drop in as it passes them
+  var path = routeLayer.getLayers()[0].getElement();
+  if (!reduce && path && path.getTotalLength) {
+    var len = path.getTotalLength();
+    path.style.strokeDasharray = len; path.style.strokeDashoffset = len;
+    path.getBoundingClientRect();
+    path.style.transition = "stroke-dashoffset 900ms var(--ease-in-out)"; path.style.strokeDashoffset = 0;
+    setTimeout(function () { path.style.transition = ""; path.style.strokeDasharray = ""; path.style.strokeDashoffset = ""; }, 1000);
+  }
+
+  // how sure the pin is: matched to its station, placed at its highway exit, or only at its city centre
+  var placeNote = function (s) {
+    return s.location === "city" ? "<br>Position approximate: city centre"
+      : s.location === "exit" ? "<br>Pin is at the highway exit; the station is close by"
+      : s.location === "uncertain" ? "<br>Two map sources disagree on which station this is: check the name when you arrive" : "";
+  };
+  var markers = [];
+  var pinIcon = function (cls, text, delay) {
+    return L.divIcon({ className: "", html: '<span class="pin-hit"><span class="pin ' + cls + '" style="--delay:' + Math.round(delay) + 'ms">' + text + '</span></span>',
+      iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -22] });
+  };
+  var popup = function (cls, label, title, lines, buy) {
+    return '<div class="pop ' + cls + '"><div class="pop-head"><span class="pin-sm">' + label + '</span><strong>' + title + '</strong></div>' +
+      '<p>' + lines + '</p>' + (buy ? '<p class="buy">' + buy + '</p>' : "") + '</div>';
+  };
+  var addMarker = function (ll, cls, label, mile, html) {
+    var m = L.marker(ll, { icon: pinIcon(cls, label, reduce ? 0 : 150 + mile / total * 800), keyboard: true, title: "" }).addTo(map)
+      .bindPopup(html, { className: "pop-wrap", closeButton: false, autoPan: true, autoPanPaddingTopLeft: [16, 16],
+        // keep the popup, and the pin under it, clear of the credit line (and, on touch, the zoom buttons)
+        autoPanPaddingBottomRight: touch ? [60, 100] : [16, 56], offset: [0, -2], maxWidth: 280 });
+    markers.push({ ll: ll, marker: m });
+  };
+  addMarker([d.start.lat, d.start.lon], "tier-start", "A", 0, popup("tier-start", "A", "Start", esc(d.start.label), ""));
+  stops.forEach(function (s) {
+    addMarker([s.lat, s.lon], tier(s.price_per_gallon), s.order, s.mile_marker, popup(tier(s.price_per_gallon), s.order, esc(s.name),
+      esc(s.address) + "<br>" + esc(s.city) + ", " + s.state + ". Mile " + num(s.mile_marker, 1) +
+        (detour(s) ? "<br>" + detour(s) : "") + placeNote(s),
+      "$" + s.price_per_gallon.toFixed(3) + "/gal, buy " + num(s.gallons, 1) + " gal for " + money(s.cost)));
+  });
+  addMarker([d.finish.lat, d.finish.lon], "tier-end", "B", total, popup("tier-end", "B", "Finish", esc(d.finish.label), ""));
+
+  // ---- list, chart and map highlight each other ----
+  var focus = function (i) {
+    var p = markers[i]; if (!p) return;
+    var z = Math.max(map.getZoom(), i === 0 || i === markers.length - 1 ? 7 : 9);
+    // Open the popup once the map has landed, so its auto-pan (which keeps it on a small phone map) does not
+    // fight the fly-to; the timer is a fallback for when the map does not move at all.
+    var opened = false, open = function () { if (!opened) { opened = true; p.marker.openPopup(); } };
+    if (reduce) { map.setView(p.ll, z); open(); }
+    else { map.once("moveend", open); setTimeout(open, 1300); map.flyTo(p.ll, z, { duration: 0.9 }); }
+    if (window.innerWidth < 900) $("map").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
+  };
+  var hot = function (i, on) {
+    var el = markers[i] && markers[i].marker.getElement(), pin = el && el.querySelector(".pin");
+    if (pin) pin.classList.toggle("is-hot", on);
+    document.querySelectorAll('[data-i="' + i + '"]').forEach(function (n) { n.classList.toggle("is-hot", on); });
+  };
+  document.querySelectorAll(".stop-btn, .gauge-dot").forEach(function (el) {
+    var i = +el.getAttribute("data-i");
+    el.addEventListener("click", function () { focus(i); });
+    el.addEventListener("mouseenter", function () { hot(i, true); });
+    el.addEventListener("mouseleave", function () { hot(i, false); });
+    el.addEventListener("focus", function () { hot(i, true); });
+    el.addEventListener("blur", function () { hot(i, false); });
+  });
+  markers.forEach(function (p, i) {
+    p.marker.on("mouseover", function () { hot(i, true); }).on("mouseout", function () { hot(i, false); });
+    p.marker.on("click", function () {
+      // Bring the stop's row into view in the side panel. On a phone the list is further down the page, and
+      // scrolling to it would throw the user away from the map and the popup they just opened.
+      if (window.innerWidth < 900) return;
+      var btn = document.querySelector('.stop-btn[data-i="' + i + '"]');
+      if (btn) btn.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
+    });
+  });
+});
+</script>
+</body>
+</html>
