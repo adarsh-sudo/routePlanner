@@ -404,8 +404,8 @@ The optimizer already tracks fuel level, so items 1-3 are small changes; item 4 
      with the lowest *fuel cost + value of time x traffic-adjusted duration*. Without the time term the
      cheapest-fuel route would usually win and traffic would never matter, so this builds on item 3.
    * Return the chosen route plus the alternatives with their cost and time, and show them on the map.
-   * Cache with a short TTL for live traffic. The route cache today keeps routes for 24 hours, which is
-     right for a static model and wrong for live conditions.
+   * Cache with a short TTL for live traffic. The route cache today keeps up to 256 routes in memory until
+     the server restarts, with no time limit, which is right for a static model and wrong for live conditions.
    * Stop-and-go driving also burns more fuel than the fixed 10 mpg assumes; modelling that is optional.
 5. **Truck routing beyond the OpenRouteService free plan** (the free-plan version is built: see
    [Truck routes](#truck-routes)). Options looked at in October 2026:
